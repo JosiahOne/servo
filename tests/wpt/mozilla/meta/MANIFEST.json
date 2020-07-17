@@ -13361,6 +13361,13 @@
       {}
      ]
     ],
+    "detached_layout.html": [
+     "b9fe090cc29c147f493732327e36b06702c4f846",
+     [
+      null,
+      {}
+     ]
+    ],
     "deterministic-raf.html": [
      "441664829a14379ebc92306f42ab0bad6581257e",
      [
@@ -13952,7 +13959,7 @@
      ]
     ],
     "interfaces.html": [
-     "145c902ff033ba1de46b41dec07992fae4fd2f13",
+     "d988b7939f83cef16a51a4ae5502ed029f31df99",
      [
       null,
       {}
@@ -14720,6 +14727,13 @@
     ],
     "obtain_frame.html": [
      "d9ff25729f9cdfd348e7c9914ce2dacd231e13a0",
+     [
+      null,
+      {}
+     ]
+    ],
+    "sessionavailable.html": [
+     "dd9a071d05c4d696471be87428c12cea573cba60",
      [
       null,
       {}

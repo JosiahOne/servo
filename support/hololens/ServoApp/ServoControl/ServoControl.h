@@ -3,7 +3,6 @@
 #include "Pref.g.h"
 #include "OpenGLES.h"
 #include "Servo.h"
-#include "DefaultUrl.h"
 
 using namespace winrt::Windows::Foundation::Collections;
 
@@ -49,6 +48,7 @@ struct ServoControl : ServoControlT<ServoControl>, public servo::ServoDelegate {
   void ChangeVisibility(bool);
   void Shutdown();
   hstring LoadURIOrSearch(hstring);
+  void GoHome();
   void SendMediaSessionAction(int32_t);
 
   ServoApp::Pref SetBoolPref(hstring aKey, bool aVal) {
@@ -173,7 +173,8 @@ struct ServoControl : ServoControlT<ServoControl>, public servo::ServoDelegate {
   virtual void OnServoURLChanged(winrt::hstring);
   virtual bool OnServoAllowNavigation(winrt::hstring);
   virtual void OnServoAnimatingChanged(bool);
-  virtual void OnServoIMEStateChanged(bool);
+  virtual void OnServoIMEHide();
+  virtual void OnServoIMEShow(hstring text, int32_t, int32_t, int32_t, int32_t);
   virtual void OnServoMediaSessionMetadata(winrt::hstring, winrt::hstring,
                                            winrt::hstring);
   virtual void OnServoMediaSessionPlaybackStateChange(int);
@@ -214,9 +215,9 @@ private:
   int mPanelHeight = 0;
   int mPanelWidth = 0;
   float mDPI = 1;
-  hstring mInitialURL = DEFAULT_URL;
   hstring mCurrentUrl = L"";
   bool mTransient = false;
+  std::optional<hstring> mInitUrl = {};
 
   Windows::UI::Xaml::Controls::SwapChainPanel ServoControl::Panel();
   void CreateNativeWindow();
@@ -265,6 +266,7 @@ private:
   void RunOnGLThread(std::function<void()>);
 
   void TryLoadUri(hstring);
+  void InitializeTextController();
 
   std::unique_ptr<servo::Servo> mServo;
   PropertySet mNativeWindowProperties;
@@ -278,6 +280,12 @@ private:
   hstring mArgs;
   std::optional<servo::Servo::MouseButton> mPressedMouseButton = {};
   std::unique_ptr<L10NStrings> mL10NStrings = nullptr;
+
+  std::optional<Windows::UI::Text::Core::CoreTextEditContext> mEditContext;
+  std::optional<Windows::UI::ViewManagement::InputPane> mInputPane;
+
+  std::optional<Windows::Foundation::Rect> mFocusedInputRect;
+  std::optional<hstring> mFocusedInputText;
 };
 } // namespace winrt::ServoApp::implementation
 

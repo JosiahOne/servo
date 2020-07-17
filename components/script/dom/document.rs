@@ -15,6 +15,9 @@ use crate::dom::bindings::codegen::Bindings::DocumentBinding::{
 };
 use crate::dom::bindings::codegen::Bindings::EventBinding::EventBinding::EventMethods;
 use crate::dom::bindings::codegen::Bindings::HTMLIFrameElementBinding::HTMLIFrameElementBinding::HTMLIFrameElementMethods;
+use crate::dom::bindings::codegen::Bindings::HTMLInputElementBinding::HTMLInputElementMethods;
+use crate::dom::bindings::codegen::Bindings::HTMLTextAreaElementBinding::HTMLTextAreaElementMethods;
+use crate::dom::bindings::codegen::Bindings::NavigatorBinding::NavigatorBinding::NavigatorMethods;
 use crate::dom::bindings::codegen::Bindings::NodeBinding::NodeMethods;
 use crate::dom::bindings::codegen::Bindings::NodeFilterBinding::NodeFilter;
 use crate::dom::bindings::codegen::Bindings::PerformanceBinding::PerformanceMethods;
@@ -67,7 +70,9 @@ use crate::dom::htmlheadelement::HTMLHeadElement;
 use crate::dom::htmlhtmlelement::HTMLHtmlElement;
 use crate::dom::htmliframeelement::HTMLIFrameElement;
 use crate::dom::htmlimageelement::HTMLImageElement;
+use crate::dom::htmlinputelement::HTMLInputElement;
 use crate::dom::htmlscriptelement::{HTMLScriptElement, ScriptResult};
+use crate::dom::htmltextareaelement::HTMLTextAreaElement;
 use crate::dom::htmltitleelement::HTMLTitleElement;
 use crate::dom::keyboardevent::KeyboardEvent;
 use crate::dom::location::Location;
@@ -106,14 +111,14 @@ use crate::stylesheet_set::StylesheetSetRef;
 use crate::task::TaskBox;
 use crate::task_source::{TaskSource, TaskSourceName};
 use crate::timers::OneshotTimerCallback;
-use canvas_traits::webgl::{self, SwapChainId, WebGLContextId, WebGLMsg};
+use canvas_traits::webgl::{self, WebGLContextId, WebGLMsg};
 use content_security_policy::{self as csp, CspList};
 use cookie::Cookie;
 use devtools_traits::ScriptToDevtoolsControlMsg;
 use dom_struct::dom_struct;
 use embedder_traits::EmbedderMsg;
 use encoding_rs::{Encoding, UTF_8};
-use euclid::default::Point2D;
+use euclid::default::{Point2D, Rect, Size2D};
 use html5ever::{LocalName, Namespace, QualName};
 use hyper_serde::Serde;
 use ipc_channel::ipc::{self, IpcSender};
@@ -168,6 +173,7 @@ use style::stylesheet_set::DocumentStylesheetSet;
 use style::stylesheets::{Origin, OriginSet, Stylesheet};
 use url::Host;
 use uuid::Uuid;
+use webrender_api::units::DeviceIntRect;
 
 /// The number of times we are allowed to see spurious `requestAnimationFrame()` calls before
 /// falling back to fake ones.
@@ -799,10 +805,10 @@ impl Document {
         self.quirks_mode.set(mode);
 
         if mode == QuirksMode::Quirks {
-            self.window
-                .layout_chan()
-                .send(Msg::SetQuirksMode(mode))
-                .unwrap();
+            match self.window.layout_chan() {
+                Some(chan) => chan.send(Msg::SetQuirksMode(mode)).unwrap(),
+                None => warn!("Layout channel unavailable"),
+            }
         }
     }
 
@@ -1105,7 +1111,23 @@ impl Document {
 
             // Notify the embedder to display an input method.
             if let Some(kind) = elem.input_method_type() {
-                self.send_to_embedder(EmbedderMsg::ShowIME(kind));
+                let rect = elem.upcast::<Node>().bounding_content_box_or_zero();
+                let rect = Rect::new(
+                    Point2D::new(rect.origin.x.to_px(), rect.origin.y.to_px()),
+                    Size2D::new(rect.size.width.to_px(), rect.size.height.to_px()),
+                );
+                let text = if let Some(input) = elem.downcast::<HTMLInputElement>() {
+                    Some((&input.Value()).to_string())
+                } else if let Some(textarea) = elem.downcast::<HTMLTextAreaElement>() {
+                    Some((&textarea.Value()).to_string())
+                } else {
+                    None
+                };
+                self.send_to_embedder(EmbedderMsg::ShowIME(
+                    kind,
+                    text,
+                    DeviceIntRect::from_untyped(&rect),
+                ));
             }
         }
     }
@@ -1700,6 +1722,13 @@ impl Document {
         self.window.reflow(ReflowGoal::Full, ReflowReason::KeyEvent);
     }
 
+    pub fn ime_dismissed(&self) {
+        self.request_focus(
+            self.GetBody().as_ref().map(|e| &*e.upcast()),
+            FocusType::Element,
+        )
+    }
+
     pub fn dispatch_composition_event(
         &self,
         composition_event: ::keyboard_types::CompositionEvent,
@@ -2246,6 +2275,17 @@ impl Document {
         // Step 11.
         // TODO: ready for post-load tasks.
 
+        // The dom.webxr.sessionavailable pref allows webxr
+        // content to immediately begin a session without waiting for a user gesture.
+        // TODO: should this only happen on the first document loaded?
+        // https://immersive-web.github.io/webxr/#user-intention
+        // https://github.com/immersive-web/navigation/issues/10
+        if pref!(dom.webxr.sessionavailable) {
+            if self.window.is_top_level() {
+                self.window.Navigator().Xr().dispatch_sessionavailable();
+            }
+        }
+
         // Step 12: completely loaded.
         // https://html.spec.whatwg.org/multipage/#completely-loaded
         // TODO: fully implement "completely loaded".
@@ -2707,7 +2747,7 @@ impl Document {
             .borrow_mut()
             .drain()
             .filter(|(_, context)| context.onscreen())
-            .map(|(id, _)| SwapChainId::Context(id))
+            .map(|(id, _)| id)
             .collect();
 
         if dirty_context_ids.is_empty() {
@@ -3703,13 +3743,15 @@ impl Document {
             })
             .cloned();
 
-        self.window
-            .layout_chan()
-            .send(Msg::AddStylesheet(
-                sheet.clone(),
-                insertion_point.as_ref().map(|s| s.sheet.clone()),
-            ))
-            .unwrap();
+        match self.window.layout_chan() {
+            Some(chan) => chan
+                .send(Msg::AddStylesheet(
+                    sheet.clone(),
+                    insertion_point.as_ref().map(|s| s.sheet.clone()),
+                ))
+                .unwrap(),
+            None => return warn!("Layout channel unavailable"),
+        }
 
         DocumentOrShadowRoot::add_stylesheet(
             owner,
@@ -3723,10 +3765,10 @@ impl Document {
     /// Remove a stylesheet owned by `owner` from the list of document sheets.
     #[allow(unrooted_must_root)] // Owner needs to be rooted already necessarily.
     pub fn remove_stylesheet(&self, owner: &Element, s: &Arc<Stylesheet>) {
-        self.window
-            .layout_chan()
-            .send(Msg::RemoveStylesheet(s.clone()))
-            .unwrap();
+        match self.window.layout_chan() {
+            Some(chan) => chan.send(Msg::RemoveStylesheet(s.clone())).unwrap(),
+            None => return warn!("Layout channel unavailable"),
+        }
 
         DocumentOrShadowRoot::remove_stylesheet(
             owner,

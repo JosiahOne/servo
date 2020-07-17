@@ -129,7 +129,7 @@ impl Window {
 
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
-            let icon_bytes = include_bytes!("../../resources/servo64.png");
+            let icon_bytes = include_bytes!("../../resources/servo_64.png");
             winit_window.set_window_icon(Some(load_icon(icon_bytes)));
         }
 
@@ -684,6 +684,10 @@ impl webxr::glwindow::GlWindow for XRWindow {
             webxr::glwindow::GlWindowMode::StereoRedCyan
         } else if pref!(dom.webxr.glwindow.left_right) {
             webxr::glwindow::GlWindowMode::StereoLeftRight
+        } else if pref!(dom.webxr.glwindow.spherical) {
+            webxr::glwindow::GlWindowMode::Spherical
+        } else if pref!(dom.webxr.glwindow.cubemap) {
+            webxr::glwindow::GlWindowMode::Cubemap
         } else {
             webxr::glwindow::GlWindowMode::Blit
         }

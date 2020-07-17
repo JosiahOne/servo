@@ -4,6 +4,7 @@
 #include "ServoControl.g.cpp"
 #include "Pref.g.cpp"
 #include <stdlib.h>
+#include "Keys.h"
 
 using namespace std::placeholders;
 using namespace winrt::Windows::ApplicationModel::Resources;
@@ -11,6 +12,7 @@ using namespace winrt::Windows::Graphics::Display;
 using namespace winrt::Windows::UI::Xaml;
 using namespace winrt::Windows::UI::Popups;
 using namespace winrt::Windows::UI::Core;
+using namespace winrt::Windows::UI::Text::Core;
 using namespace winrt::Windows::Foundation;
 using namespace winrt::Windows::System;
 using namespace winrt::Windows::Devices::Input;
@@ -66,27 +68,91 @@ void ServoControl::OnLoaded(IInspectable const &, RoutedEventArgs const &) {
       std::bind(&ServoControl::OnSurfacePointerMoved, this, _1, _2));
   panel.PointerWheelChanged(
       std::bind(&ServoControl::OnSurfaceWheelChanged, this, _1, _2));
-  panel.ManipulationStarted(
-      [=](IInspectable const &,
-          Input::ManipulationStartedRoutedEventArgs const &e) {
-        mOnCaptureGesturesStartedEvent();
-        e.Handled(true);
-      });
-  panel.ManipulationCompleted(
-      [=](IInspectable const &,
-          Input::ManipulationCompletedRoutedEventArgs const &e) {
-        mOnCaptureGesturesEndedEvent();
-        e.Handled(true);
-      });
+  panel.ManipulationStarted([=](const auto &, const auto &e) {
+    mOnCaptureGesturesStartedEvent();
+    e.Handled(true);
+  });
+  panel.ManipulationCompleted([=](const auto &, const auto &e) {
+    mOnCaptureGesturesEndedEvent();
+    e.Handled(true);
+  });
   panel.ManipulationDelta(
       std::bind(&ServoControl::OnSurfaceManipulationDelta, this, _1, _2));
-  Panel().SizeChanged(std::bind(&ServoControl::OnSurfaceResized, this, _1, _2));
+  panel.SizeChanged(std::bind(&ServoControl::OnSurfaceResized, this, _1, _2));
+
+  InitializeTextController();
   InitializeConditionVariable(&mGLCondVar);
   InitializeCriticalSection(&mGLLock);
   InitializeConditionVariable(&mDialogCondVar);
   InitializeCriticalSection(&mDialogLock);
   CreateNativeWindow();
   StartRenderLoop();
+}
+
+void ServoControl::InitializeTextController() {
+  mInputPane = Windows::UI::ViewManagement::InputPane::GetForCurrentView();
+  mInputPane->Hiding([=](const auto &, const auto &) {
+    if (mLooping) {
+      RunOnGLThread([=] { mServo->IMEDismissed(); });
+    }
+  });
+
+  auto manager = CoreTextServicesManager::GetForCurrentView();
+  mEditContext = manager.CreateEditContext();
+  mEditContext->InputPaneDisplayPolicy(CoreTextInputPaneDisplayPolicy::Manual);
+
+  mEditContext->TextRequested([=](const auto &, const auto &e) {
+    e.Request().Text(*mFocusedInputText);
+  });
+
+  mEditContext->SelectionRequested([=](const auto &, const auto &) {});
+
+  mEditContext->LayoutRequested([=](const auto &, const auto &e) {
+    // Necessary to show the preview
+    e.Request().LayoutBounds().TextBounds(*mFocusedInputRect);
+    e.Request().LayoutBounds().ControlBounds(*mFocusedInputRect);
+  });
+
+  mEditContext->TextUpdating([=](const auto &, const auto &e) {
+    RunOnGLThread([=] {
+      auto text = *hstring2char(e.Text());
+      size_t size = strlen(text);
+      for (int i = 0; i < size; i++) {
+        char letter[2];
+        memcpy(letter, &text[i], 1);
+        letter[1] = '\0';
+        mServo->KeyDown(letter);
+        mServo->KeyUp(letter);
+      }
+    });
+    e.Result(CoreTextTextUpdatingResult::Succeeded);
+  });
+
+  GotFocus(
+      [=](const auto &, const auto &) { mEditContext->NotifyFocusEnter(); });
+
+  LostFocus(
+      [=](const auto &, const auto &) { mEditContext->NotifyFocusLeave(); });
+
+  PreviewKeyDown([=](const auto &, const auto &e) {
+    auto keystr = KeyToString(e.Key());
+    if (keystr.has_value()) {
+      RunOnGLThread([=] {
+        auto keyname = *keystr;
+        mServo->KeyDown(keyname);
+      });
+    }
+  });
+
+  PreviewKeyUp([=](const auto &, const auto &e) {
+    auto keystr = KeyToString(e.Key());
+    if (keystr.has_value()) {
+      RunOnGLThread([=] {
+        auto keyname = *keystr;
+        mServo->KeyUp(keyname);
+      });
+    }
+  });
 }
 
 Controls::SwapChainPanel ServoControl::Panel() {
@@ -128,6 +194,7 @@ void ServoControl::OnSurfaceManipulationDelta(
 
 void ServoControl::OnSurfaceTapped(IInspectable const &,
                                    Input::TappedRoutedEventArgs const &e) {
+  Focus(FocusState::Programmatic);
   if (e.PointerDeviceType() == PointerDeviceType::Mouse) {
     auto coords = e.GetPosition(Panel());
     auto x = coords.X * mDPI;
@@ -270,6 +337,9 @@ void ServoControl::ChangeVisibility(bool visible) {
 void ServoControl::Stop() {
   RunOnGLThread([=] { mServo->Stop(); });
 }
+void ServoControl::GoHome() {
+  RunOnGLThread([=] { mServo->GoHome(); });
+}
 hstring ServoControl::LoadURIOrSearch(hstring input) {
   // Initial input is valid
   if (mServo->IsUriValid(input)) {
@@ -306,9 +376,7 @@ void ServoControl::SendMediaSessionAction(int32_t action) {
 }
 
 void ServoControl::TryLoadUri(hstring input) {
-  if (!mLooping) {
-    mInitialURL = input;
-  } else {
+  if (mLooping) {
     RunOnGLThread([=] {
       if (!mServo->LoadUri(input)) {
         RunOnUIThread([=] {
@@ -317,6 +385,8 @@ void ServoControl::TryLoadUri(hstring input) {
         });
       }
     });
+  } else {
+    mInitUrl = input;
   }
 }
 
@@ -336,8 +406,8 @@ void ServoControl::Loop() {
     log(L"Entering loop");
     ServoDelegate *sd = static_cast<ServoDelegate *>(this);
     EGLNativeWindowType win = GetNativeWindow();
-    mServo = std::make_unique<Servo>(mInitialURL, mArgs, mPanelWidth,
-                                     mPanelHeight, win, mDPI, *sd);
+    mServo = std::make_unique<Servo>(mInitUrl, mArgs, mPanelWidth, mPanelHeight,
+                                     win, mDPI, *sd);
   } else {
     // FIXME: this will fail since create_task didn't pick the thread
     // where Servo was running initially.
@@ -439,9 +509,25 @@ void ServoControl::OnServoAnimatingChanged(bool animating) {
   WakeConditionVariable(&mGLCondVar);
 }
 
-void ServoControl::OnServoIMEStateChanged(bool) {
-  // FIXME:
-  // https://docs.microsoft.com/en-us/windows/win32/winauto/uiauto-implementingtextandtextrange
+void ServoControl::OnServoIMEHide() {
+  RunOnUIThread([=] { mInputPane->TryHide(); });
+}
+
+void ServoControl::OnServoIMEShow(hstring text, int32_t x, int32_t y,
+                                  int32_t width, int32_t height) {
+  RunOnUIThread([=] {
+    mEditContext->NotifyFocusEnter();
+    // FIXME: The simpleservo on_ime_show callback comes with a input method
+    // type parameter that could be used to set the input scope here.
+    mEditContext->InputScope(CoreTextInputScope::Text);
+    // offset of the Servo SwapChainPanel.
+    auto transform = Panel().TransformToVisual(Window::Current().Content());
+    auto offset = transform.TransformPoint(Point(0, 0));
+    mFocusedInputRect =
+        Rect(x + offset.X, y + offset.Y, (float)width, (float)height);
+    mFocusedInputText = text;
+    mInputPane->TryShow();
+  });
 }
 
 void ServoControl::OnServoMediaSessionMetadata(hstring title, hstring artist,

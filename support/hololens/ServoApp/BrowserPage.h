@@ -17,8 +17,10 @@ using namespace winrt::Windows::Foundation;
 using namespace winrt::Windows::UI::Xaml;
 using namespace winrt::Windows::UI::Xaml::Media;
 
-static const hstring SERVO_SCHEME = L"fxr";
-static const hstring SERVO_SCHEME_SLASH_SLASH = L"fxr://";
+static const hstring FXR_SCHEME = L"fxr";
+static const hstring FXR_SCHEME_SLASH_SLASH = L"fxr://";
+static const hstring FXRMIN_SCHEME = L"fxrmin";
+static const hstring FXRMIN_SCHEME_SLASH_SLASH = L"fxrmin://";
 
 struct BrowserPage : BrowserPageT<BrowserPage>, public servo::DevtoolsDelegate {
 public:
@@ -37,8 +39,7 @@ public:
   OnURLKeyboardAccelerator(IInspectable const &,
                            Input::KeyboardAcceleratorInvokedEventArgs const &);
   void Shutdown();
-  void LoadServoURI(Uri uri);
-  void SetTransientMode(bool);
+  void LoadFXRURI(Uri uri);
   void SetArgs(hstring);
   void OnMediaControlsPlayClicked(IInspectable const &,
                                   RoutedEventArgs const &);
@@ -52,6 +53,7 @@ public:
   Collections::IObservableVector<IInspectable> ConsoleLogs() { return mLogs; };
 
 private:
+  void SetTransientMode(bool);
   void UpdatePref(ServoApp::Pref, Controls::Control);
   void BindServoEvents();
   void BuildPrefList();
@@ -64,20 +66,18 @@ private:
 
 struct ConsoleLog : ConsoleLogT<ConsoleLog> {
 public:
-  ConsoleLog(Windows::UI::Color dot, Windows::UI::Color bg, hstring b,
-             hstring s)
-      : mSource(s), mBody(b) {
-    mDotColor = UI::Xaml::Media::SolidColorBrush(dot);
-    mBgColor = UI::Xaml::Media::SolidColorBrush(bg);
+  ConsoleLog(Windows::UI::Color glyph, hstring g, hstring b, hstring s)
+      : mGlyph(g), mSource(s), mBody(b) {
+    mGlyphColor = UI::Xaml::Media::SolidColorBrush(glyph);
   };
-  SolidColorBrush DotColor() { return mDotColor; };
-  SolidColorBrush BgColor() { return mBgColor; };
+  SolidColorBrush GlyphColor() { return mGlyphColor; };
+  hstring Glyph() { return mGlyph; };
   hstring Source() { return mSource; };
   hstring Body() { return mBody; };
 
 private:
-  SolidColorBrush mDotColor;
-  SolidColorBrush mBgColor;
+  SolidColorBrush mGlyphColor;
+  hstring mGlyph;
   hstring mSource;
   hstring mBody;
 };

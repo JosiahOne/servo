@@ -570,6 +570,8 @@ pub enum CompositorEvent {
     KeyboardEvent(KeyboardEvent),
     /// An event from the IME is dispatched.
     CompositionEvent(CompositionEvent),
+    /// Virtual keyboard was dismissed
+    IMEDismissedEvent,
 }
 
 /// Requests a TimerEvent-Message be sent after the given duration.
@@ -644,7 +646,7 @@ pub struct InitialScriptState {
     /// A channel on which messages can be sent to the constellation from script.
     pub script_to_constellation_chan: ScriptToConstellationChan,
     /// A handle to register script-(and associated layout-)threads for hang monitoring.
-    pub background_hang_monitor_register: Option<Box<dyn BackgroundHangMonitorRegister>>,
+    pub background_hang_monitor_register: Box<dyn BackgroundHangMonitorRegister>,
     /// A sender for the layout thread to communicate to the constellation.
     pub layout_to_constellation_chan: IpcSender<LayoutMsg>,
     /// A channel to schedule timer events.
